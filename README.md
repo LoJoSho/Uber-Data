@@ -7,14 +7,15 @@ This Shinny App allows you to view the raw data Uber has provided in the Summer 
 I loaded the following libraries before we began:
 
 ```R
-library(dplyr)
-library(tidyr)
-library(shiny)
-library(vroom)
-library(ggplot2)
-library(DT)
-library(leaflet)
-library(leaflet.extras)
+library(dplyr) # Helps managing data
+library(tidyr) # Helps tidy data
+library(shiny) # Create an online application
+library(vroom) # Loading csv files like a vacuum 
+library(ggplot2) # This for for the plots
+library(DT) # This is for the tables
+library(leaflet) # This is for building the maps
+library(leaflet.extras) # Some extra features for Leaflet
+library(randomForest) # This is for prediction
 
 # Clear Variables
 rm(list = ls())
@@ -30,6 +31,7 @@ jun_data <- vroom::vroom("data/uber-raw-data-jun14.csv")
 may_data <- vroom::vroom("data/uber-raw-data-may14.csv")
 sep_data <- vroom::vroom("data/uber-raw-data-sep14.csv")
 
+# Bind them all together into one data frame for easier access
 df <- rbind(apr_data, aug_data, jul_data, jun_data, may_data, sep_data)
 
 # Unload all this data since it's been combined (helps save memory)
@@ -103,6 +105,44 @@ Finally, I also added a button in the shinny app. An example of the above is:
   })
   })
 ```
+
+## Creating Prediction Engine
+
+For my prediction engine, I decided to go with randomForest. First, I decided to create a model with a sample portion of the data frame (I randomly selected rows from it)
+
+I then ran it through Rainforest to create a model, one for lat and one for lon.
+
+```R
+# Prediction Engine:
+train_data <- get_sample(750) # I know this is small, but there isn't a lot we can do with our computting power
+#test_data <- anti_join(df, train_data)
+
+model_lat <- randomForest(Lat ~ Hour + Minute + Month + Day, data = train_data)
+model_lon <- randomForest(Lon ~ Hour + Minute + Month + Day, data = train_data)
+```
+
+Then in the server I ask it to predict using those variables and return a position. As you can see, I also wanted to see an Address as well, so I queried open street map to get that data. 
+
+```R
+  calculate_position <- reactive({
+    # Predict latitude and longitude
+    lat <- predict(model_lat, newdata = data.frame(Hour = input$hour, Minute = input$minute, Month = input$month, Day = input$day))
+    lon <- predict(model_lon, newdata = data.frame(Hour = input$hour, Minute = input$minute, Month = input$month, Day = input$day))
+    
+    # Get Address
+    url <- paste0("https://nominatim.openstreetmap.org/reverse?format=json&lat=", lat, "&lon=", lon, "&zoom=18&addressdetails=1")
+    result <- jsonlite::fromJSON(url)
+    
+    # Extract address
+    address <- ifelse(!is.null(result$display_name), result$display_name, "Address not available")
+    
+    # Return position and address
+    return(list(lat = lat, lon = lon, address = address))
+  })
+```
+
+Finally, it would return the longitude, latitude, and address that it predicts where the next user will start their drive. 
+
 
 ## Shinny App
 

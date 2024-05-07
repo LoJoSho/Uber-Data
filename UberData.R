@@ -7,7 +7,6 @@ library(DT)
 library(leaflet)
 library(leaflet.extras)
 library(randomForest)
-
 # Uber Data
 
 # Sets working directory
@@ -15,8 +14,7 @@ library(randomForest)
 # Clear Variables
 rm(list = ls())
 
-local <- F # Set to true when loading on a machine, setting to T rebuilds all of the data
-if (local == T) {
+if (!file.exists("data/merged.rds")) {
 # Read all of the raw data
 apr_data <- vroom::vroom("data/uber-raw-data-apr14.csv")
 aug_data <- vroom::vroom("data/uber-raw-data-aug14.csv")
@@ -25,6 +23,7 @@ jun_data <- vroom::vroom("data/uber-raw-data-jun14.csv")
 may_data <- vroom::vroom("data/uber-raw-data-may14.csv")
 sep_data <- vroom::vroom("data/uber-raw-data-sep14.csv")
 
+# Bind them all together into one data frame for easier access
 df <- rbind(apr_data, aug_data, jul_data, jun_data, may_data, sep_data)
 
 # Unload all this data since it's been combined (helps save memory)
@@ -34,11 +33,13 @@ rm(apr_data, aug_data, jul_data, jun_data, may_data, sep_data)
 df <- df %>% separate(`Date/Time`, c('Date', 'Time'), sep = " ")
 # Handle seperating all of the time
 df <- df %>% separate(Time, c('Hour', 'Minute', 'Second'), sep = ":")
+df$Second <- NULL # They are all 00 in our dataset, so we can just remove em
 # Handle seperating all of the dates
 df <- df %>% separate(Date, c('Month', 'Day', 'Year'), sep = "/")
-write.csv(df, "data/mergedData.csv")
+#fwrite(df, "data/mergedData.csv")
+saveRDS(df, "data/merged.rds")
 } else {
-  df <- vroom::vroom("data/mergedData.csv")
+  df <- readRDS("data/merged.rds")
 }
 # For future loading
 #write.csv(df, "data/mergedData.csv")
@@ -80,24 +81,7 @@ df_bases$Month <- as.character(df_bases$Month)
 #  geom_bar(stat = "identity", fill = "skyblue") + 
 #  scale_y_continuous(labels = scales::comma) 
 
-# Prediction Engine:
-train_data <- get_sample(50)
-test_data <- anti_join(df, train_data)
-
-model <- randomForest(Lat ~ Hour + Minute + Second + Month + Day + Year, data = train_data)
-predictions <- predict(model, test_data)
-
-# Evaluate model performance
-mae <- mean(abs(predictions - test_data$Position))
-rmse <- sqrt(mean((predictions - test_data$Position)^2))
-
-# Print evaluation metrics
-print(paste("Mean Absolute Error:", mae))
-print(paste("Root Mean Squared Error:", rmse))
-
-# Beware of Shinny Beginnin here!
-
-# Create Leaflet to be used in Shinny App
+# Functions
 get_sample <- function(amount) {
   return(df %>% sample_n(amount, replace = FALSE))
 }
@@ -114,6 +98,17 @@ createLeaflet <- function() {
       clusterOptions = markerClusterOptions
     )
 }
+
+# Prediction Engine:
+train_data <- get_sample(750) # I know this is small, but there isn't a lot we can do with our computting power
+#test_data <- anti_join(df, train_data)
+
+model_lat <- randomForest(Lat ~ Hour + Minute + Month + Day, data = train_data)
+model_lon <- randomForest(Lon ~ Hour + Minute + Month + Day, data = train_data)
+
+# Beware of Shinny Beginnin here!
+
+# Create Leaflet to be used in Shinny App
 
 ui <- fluidPage(
   
@@ -177,23 +172,80 @@ ui <- fluidPage(
                mainPanel(
                  actionButton("refreshButton", "Refresh"),
                  # Ughhh, I can't get the resize to work >:(
-                 fluidRow(column(4, div(style = "height: 600px !important; width: 100% !important;", leafletOutput("leaflet")))),
+                 fluidRow(column(4, leafletOutput("leaflet")))),
                ),
-             ))
-)
-)
+             ),
+    tabPanel("Prediction Engine", 
+             fluidPage(
+               titlePanel("Prediction"), 
+               p("There was a prediction engine here, however, ShinnyApp kept OOM. It was either Leaflet or this, see code for more details."),
+               sidebarLayout(
+                 sidebarPanel(
+                   # Input panel for time
+                   numericInput("hour", "Enter Hour of the Day (0-23):", value = 12, min = 0, max = 23),
+                   numericInput("minute", "Enter Minute of the Hour (0-59):", value = 30, min = 0, max = 59),
+                   numericInput("month", "Enter Month of the year (0-12):", value = 0, min = 0, max = 12),
+                   numericInput("day", "Enter Day of the month (0-31):", value = 15, min = 0, max = 31),
+               ),
+               mainPanel(
+                 textOutput("result_lat"),
+                 textOutput("result_lon"),
+                 textOutput("result_address"),
+                 leafletOutput("predict_leaflet"),
+               )
+             )))
+))
 
 
 # Define server logic
 server <- function(input, output) {
-  #output$table_01 <- DT::renderDataTable(df[, c(input$X, input$Y, input$Splitby)], 
-  #                                       options = list(pageLength = 25))
-  
-  
   output$table_02 <- DT::renderDataTable(df_monthly_hour)
   output$table_03 <- DT::renderDataTable(df_by_the_hour)
   output$table_04 <- DT::renderDataTable(df_days)
   output$table_df_bases <- DT::renderDataTable(df_bases)
+  
+  calculate_position <- reactive({
+    # Predict latitude and longitude
+    lat <- predict(model_lat, newdata = data.frame(Hour = input$hour, Minute = input$minute, Month = input$month, Day = input$day))
+    lon <- predict(model_lon, newdata = data.frame(Hour = input$hour, Minute = input$minute, Month = input$month, Day = input$day))
+    
+    # Get Address
+    url <- paste0("https://nominatim.openstreetmap.org/reverse?format=json&lat=", lat, "&lon=", lon, "&zoom=18&addressdetails=1")
+    result <- jsonlite::fromJSON(url)
+    
+    # Extract address
+    address <- ifelse(!is.null(result$display_name), result$display_name, "Address not available")
+    
+    # Return position and address
+    return(list(lat = lat, lon = lon, address = address))
+  })
+  
+  output$result_lat <- renderText({
+    pos <- calculate_position()
+    result_text <- paste("Latitude: ", pos$lat)
+  })
+  output$result_lon <- renderText({
+    pos <- calculate_position()
+    result_text <- paste("Long: ", pos$lon)
+  })
+  output$result_address <- renderText({
+    pos <- calculate_position()
+    result_text <- pos$address
+  })
+  #output$predict_leaflet <- renderLeaflet({
+    # Predict latitude and longitude
+  #  position <- calculate_position()
+    
+    # Create leaflet map
+  #  leaflet(position) %>%
+  #    addTiles() %>%
+  #    addMarkers(
+  #      lng = ~lon,
+  #      lat = ~lat,
+  #     popup = ~paste("Address: ", address, "<br>Lat:", lat, "<br>Lon:", lon),
+  #      clusterOptions = markerClusterOptions
+  #    )
+  #})
   
   # Render all the plots in "Boss View"
   output$plot_monthly_hours <- renderPlot({
@@ -229,6 +281,8 @@ server <- function(input, output) {
     createLeaflet()
   })
   })
+  
+  
 }
 
 # Run the application
