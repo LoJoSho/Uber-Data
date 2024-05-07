@@ -94,13 +94,13 @@ createLeaflet <- function() {
     addMarkers(
       lng = ~Lon,
       lat = ~Lat,
-      popup = ~paste("Date:", Month, "/", Day, "/", Year, "<br>Time:", Hour, ":", Minute, ":", Second, "<br>Base: ", Base),
+      popup = ~paste("Date:", Month, "/", Day, "/", Year, "<br>Time:", Hour, ":", Minute, "<br>Base: ", Base),
       clusterOptions = markerClusterOptions
     )
 }
 
 # Prediction Engine:
-train_data <- get_sample(750) # I know this is small, but there isn't a lot we can do with our computting power
+train_data <- get_sample(5000) # I know this is small, but there isn't a lot we can do with our computting power
 #test_data <- anti_join(df, train_data)
 
 model_lat <- randomForest(Lat ~ Hour + Minute + Month + Day, data = train_data)
@@ -161,24 +161,25 @@ ui <- fluidPage(
                  )
                )
              )),
+    # This was removed due to RAM limitations
     # Setup a leaflet/Interactive map to play around with
-    tabPanel("Leaflet", 
-             fluidPage(
-               titlePanel("Leaflet Heatmap"),
-               h3("This may take a second"),
-               p("This takes 100,000 randomly selected rows and inputs them to help browsers render the map!"),
-               p("If after 30 seconds it does not load, try hitting refresh"),
-               p("You can also use refresh to load another sample of data. "),
-               mainPanel(
-                 actionButton("refreshButton", "Refresh"),
-                 # Ughhh, I can't get the resize to work >:(
-                 fluidRow(column(4, leafletOutput("leaflet")))),
-               ),
-             ),
+    #tabPanel("Leaflet", 
+    #         fluidPage(
+    #           titlePanel("Leaflet Heatmap"),
+    #           h3("This may take a second"),
+    #           p("This takes 100,000 randomly selected rows and inputs them to help browsers render the map!"),
+    #           p("If after 30 seconds it does not load, try hitting refresh"),
+    #           p("You can also use refresh to load another sample of data. "),
+    #           mainPanel(
+    #            actionButton("refreshButton", "Refresh"),
+    #             # Ughhh, I can't get the resize to work >:(
+    #             fluidRow(column(4, leafletOutput("leaflet")))),
+    #          ),
+    #         ),
     tabPanel("Prediction Engine", 
              fluidPage(
                titlePanel("Prediction"), 
-               p("There was a prediction engine here, however, ShinnyApp kept OOM. It was either Leaflet or this, see code for more details."),
+               p("Predict where the rider is going to be based on the time!"),
                sidebarLayout(
                  sidebarPanel(
                    # Input panel for time
@@ -232,20 +233,20 @@ server <- function(input, output) {
     pos <- calculate_position()
     result_text <- pos$address
   })
-  #output$predict_leaflet <- renderLeaflet({
+  output$predict_leaflet <- renderLeaflet({
     # Predict latitude and longitude
-  #  position <- calculate_position()
+    position <- calculate_position()
     
     # Create leaflet map
-  #  leaflet(position) %>%
-  #    addTiles() %>%
-  #    addMarkers(
-  #      lng = ~lon,
-  #      lat = ~lat,
-  #     popup = ~paste("Address: ", address, "<br>Lat:", lat, "<br>Lon:", lon),
-  #      clusterOptions = markerClusterOptions
-  #    )
-  #})
+    leaflet(position) %>%
+      addTiles() %>%
+      addMarkers(
+        lng = ~lon,
+        lat = ~lat,
+       popup = ~paste("Address: ", address, "<br>Lat:", lat, "<br>Lon:", lon),
+        clusterOptions = markerClusterOptions
+      )
+  })
   
   # Render all the plots in "Boss View"
   output$plot_monthly_hours <- renderPlot({
@@ -274,7 +275,7 @@ server <- function(input, output) {
   
   # Handle the rendering in leaflets.
   # First render it at least once
-  output$leaflet <- renderLeaflet({createLeaflet()})
+  #output$leaflet <- renderLeaflet({createLeaflet()})
   # Handle the refresh button
   observeEvent(input$refreshButton, {
     output$leaflet <- renderLeaflet({
